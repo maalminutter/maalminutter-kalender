@@ -16,21 +16,28 @@ CALS = [
 
 def parse_ics(text, liga, event_type ):
     events = []
+    # Split ved VEVENT og fjern headeren
     blocks = text.split("BEGIN:VEVENT")[1:]
     now = datetime.now()
-    end_date = now + timedelta(days=14) # Vi henter 14 dage for en sikkerheds skyld
+    # Vi kigger 14 dage frem for at være sikre på at fange alt relevant
+    end_date = now + timedelta(days=14)
 
     for block in blocks:
         summary = ""
         dtstart = ""
-        for line in block.split("\n"):
-            if line.startswith("SUMMARY:"): summary = line.replace("SUMMARY:", "").strip()
-            if line.startswith("DTSTART"): dtstart = line.split(":")[-1].strip()
+        # Find SUMMARY og DTSTART manuelt for at undgå regex-fejl
+        for line in block.splitlines():
+            line = line.strip()
+            if line.startswith("SUMMARY:"):
+                summary = line.replace("SUMMARY:", "").strip()
+            elif line.startswith("DTSTART"):
+                dtstart = line.split(":")[-1].strip()
         
-        if not summary or not dtstart: continue
+        if not summary or not dtstart:
+            continue
         
         try:
-            # Parse dato (YYYYMMDD eller YYYYMMDDTHHMMSSZ)
+            # Parse dato-formater: YYYYMMDD eller YYYYMMDDTHHMMSSZ
             y, m, d = int(dtstart[:4]), int(dtstart[4:6]), int(dtstart[6:8])
             if "T" in dtstart:
                 h, mi = int(dtstart[9:11]), int(dtstart[11:13])
@@ -38,25 +45,39 @@ def parse_ics(text, liga, event_type ):
             else:
                 dt = datetime(y, m, d, 12, 0)
             
-            if now <= dt <= end_date:
+            # Filtrer på dato (vi viser kun fremtidige kampe)
+            if dt >= now - timedelta(hours=24) and dt <= end_date:
                 events.append({
                     "summary": summary,
                     "start": dt.isoformat(),
                     "liga": liga,
                     "type": event_type
                 })
-        except: continue
+        except Exception as e:
+            print(f"Fejl ved parsing af event: {e}")
+            continue
     return events
 
 all_events = []
+print(f"Starter hentning af {len(CALS)} kalendere...")
+
 for cal in CALS:
     try:
-        r = requests.get(cal["url"], timeout=10)
+        print(f"Henter {cal['liga']} - {cal['type']}...")
+        r = requests.get(cal["url"], timeout=15)
         if r.ok:
-            all_events.extend(parse_ics(r.text, cal["liga"], cal["type"]))
-    except: continue
+            found = parse_ics(r.text, cal["liga"], cal["type"])
+            all_events.extend(found)
+            print(f"Fandt {len(found)} kampe.")
+        else:
+            print(f"Kunne ikke hente {cal['liga']}: HTTP {r.status_code}")
+    except Exception as e:
+        print(f"Netværksfejl ved {cal['liga']}: {e}")
+        continue
 
+# Sortér alle kampe efter tid
 all_events.sort(key=lambda x: x["start"])
 
+print(f"Gemmer i alt {len(all_events)} kampe i kampe.json")
 with open("kampe.json", "w", encoding="utf-8") as f:
     json.dump(all_events, f, ensure_ascii=False, indent=2)
